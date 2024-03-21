@@ -1,0 +1,46 @@
+import { Commitment, Connection, Keypair, PublicKey } from "@solana/web3.js";
+import SquadsMesh, { DEFAULT_MULTISIG_PROGRAM_ID } from "@sqds/mesh";
+import * as fs from "fs";
+import NodeWallet from "@project-serum/anchor/dist/cjs/nodewallet";
+import { envOrErr, executeProposal, getProposals } from "xc_admin_common";
+import {
+  getPythClusterApiUrl,
+  PythCluster,
+} from "@pythnetwork/client/lib/cluster";
+
+const CLUSTER: PythCluster = envOrErr("CLUSTER") as PythCluster;
+const VAULT: PublicKey = new PublicKey(envOrErr("VAULT"));
+const KEYPAIR: Keypair = Keypair.fromSecretKey(
+  Uint8Array.from(JSON.parse(fs.readFileSync(envOrErr("WALLET"), "ascii")))
+);
+const COMMITMENT: Commitment =
+  (process.env.COMMITMENT as Commitment) ?? "confirmed";
+
+async function run() {
+  const squad = new SquadsMesh({
+    connection: new Connection(getPythClusterApiUrl(CLUSTER), COMMITMENT),
+    wallet: new NodeWallet(KEYPAIR),
+    multisigProgramId: DEFAULT_MULTISIG_PROGRAM_ID,
+  });
+
+  const proposals = await getProposals(squad, VAULT, undefined, "executeReady");
+
+  for (const proposal of proposals) {
+    console.log("Trying to execute: ", proposal.publicKey.toBase58());
+    // If we have previously cancelled because the proposal was failing, don't attempt
+    if (proposal.cancelled.length == 0) {
+      await executeProposal(proposal, squad, CLUSTER, COMMITMENT);
+    } else {
+      console.log("Skipping: ", proposal.publicKey.toBase58());
+    }
+  }
+}
+
+(async () => {
+  try {
+    await run();
+  } catch (err) {
+    console.error(err);
+    throw new Error();
+  }
+})();
